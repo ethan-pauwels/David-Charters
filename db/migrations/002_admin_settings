@@ -1,0 +1,51 @@
+create table if not exists business_settings (
+    id uuid primary key default gen_random_uuid(),
+    charter_name text not null default 'boat_1 Charter',
+    price_cents integer not null default 20000,
+    timezone text not null default 'America/Chicago',
+    updated_at timestamptz not null default now()
+);
+
+create table if not exists weekly_availability (
+    id uuid primary key default gen_random_uuid(),
+    day_of_week integer not null check (day_of_week between 0 and 6),
+    start_time time not null,
+    end_time time not null,
+    is_active boolean not null default true,
+    created_at timestamptz not null default now()
+);
+
+create unique index if not exists unique_weekly_slot
+on weekly_availability (day_of_week, start_time, end_time);
+
+create or replace function set_business_settings_updated_at()
+returns trigger as $$
+begin
+    new.updated_at = now();
+    return new;
+end;
+$$ language plpgsql;
+
+drop trigger if exists business_settings_set_updated_at on business_settings;
+
+create trigger business_settings_set_updated_at
+before update on business_settings
+for each row
+execute function set_business_settings_updated_at();
+
+insert into business_settings (charter_name, price_cents, timezone)
+select 'boat_1 Charter', 20000, 'America/Chicago'
+where not exists (select 1 from business_settings);
+
+insert into weekly_availability (day_of_week, start_time, end_time, is_active)
+values
+    (5, '12:00:00', '14:00:00', true),
+    (5, '14:00:00', '16:00:00', true),
+    (5, '16:00:00', '18:00:00', true),
+    (6, '12:00:00', '14:00:00', true),
+    (6, '14:00:00', '16:00:00', true),
+    (6, '16:00:00', '18:00:00', true),
+    (0, '12:00:00', '14:00:00', true),
+    (0, '14:00:00', '16:00:00', true),
+    (0, '16:00:00', '18:00:00', true)
+on conflict do nothing;
