@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect, useMemo, useState } from "react";
+import { Suspense, useEffect, useMemo, useState } from "react";
 import { useSearchParams } from "next/navigation";
 import Navbar from "@/components/Navbar";
 import BookingCalendar from "@/components/BookingCalendar";
@@ -9,7 +9,7 @@ import Button from "@/components/Button";
 import { formatCurrency } from "@/lib/utils";
 import type { AvailabilityResponse } from "@/types/booking";
 
-export default function BookingPage() {
+function BookingPageContent() {
   const searchParams = useSearchParams();
 
   const success = searchParams.get("success") === "1";
@@ -33,33 +33,34 @@ export default function BookingPage() {
   const selectedDayOfWeek = date ? new Date(`${date}T00:00:00`).getDay() : null;
 
   const fallbackPriceCents =
-  selectedDayOfWeek === 6
-    ? 90000
-    : selectedDayOfWeek === 0
-      ? 80000
-      : 70000;
+    selectedDayOfWeek === 6
+      ? 90000
+      : selectedDayOfWeek === 0
+        ? 80000
+        : 70000;
 
-const selectedSlot = availability?.slots.find(
-  (slot) => slot.start === selectedStart && slot.end === selectedEnd
-);
+  const selectedSlot = availability?.slots.find(
+    (slot) => slot.start === selectedStart && slot.end === selectedEnd
+  );
 
-const slotPriceCents =
-  selectedSlot && "price_cents" in selectedSlot
-    ? Number(selectedSlot.price_cents)
-    : null;
+  const slotPriceCents =
+    selectedSlot && "price_cents" in selectedSlot
+      ? Number(selectedSlot.price_cents)
+      : null;
 
-const currentPriceCents =
-  typeof slotPriceCents === "number" && slotPriceCents > 0
-    ? slotPriceCents
-    : fallbackPriceCents;
+  const currentPriceCents =
+    typeof slotPriceCents === "number" && slotPriceCents > 0
+      ? slotPriceCents
+      : fallbackPriceCents;
+
   const currentCharterName = availability?.settings?.charter_name ?? "Your charter";
 
   const priceNote =
-  selectedSlot &&
-  "price_note" in selectedSlot &&
-  typeof selectedSlot.price_note === "string"
-    ? selectedSlot.price_note
-    : null;
+    selectedSlot &&
+    "price_note" in selectedSlot &&
+    typeof selectedSlot.price_note === "string"
+      ? selectedSlot.price_note
+      : null;
 
   useEffect(() => {
     if (success) {
@@ -532,5 +533,22 @@ const currentPriceCents =
         </div>
       </section>
     </main>
+  );
+}
+
+export default function BookingPage() {
+  return (
+    <Suspense
+      fallback={
+        <main className="bg-white text-slate-900">
+          <Navbar />
+          <section className="mx-auto max-w-6xl px-6 py-16">
+            <p className="text-slate-600">Loading booking page...</p>
+          </section>
+        </main>
+      }
+    >
+      <BookingPageContent />
+    </Suspense>
   );
 }
