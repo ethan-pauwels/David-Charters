@@ -46,10 +46,50 @@ function formatTimeTo12Hour(time: string): string {
   return `${adjustedHour}:${minute.toString().padStart(2, "0")} ${suffix}`;
 }
 
+function getFormattedPrivateKey(): string | null {
+  const rawPrivateKey = process.env.GOOGLE_PRIVATE_KEY;
+
+  if (!rawPrivateKey) {
+    return null;
+  }
+
+  let privateKey = rawPrivateKey.trim();
+
+  // Handles cases where the key was pasted into Vercel with wrapping quotes.
+  if (
+    (privateKey.startsWith('"') && privateKey.endsWith('"')) ||
+    (privateKey.startsWith("'") && privateKey.endsWith("'"))
+  ) {
+    privateKey = privateKey.slice(1, -1);
+  }
+
+  // Converts literal "\n" characters into real line breaks.
+  privateKey = privateKey.replace(/\\n/g, "\n");
+
+  // Final sanity check so we fail with a clear log instead of an OpenSSL decoder error.
+  if (
+    !privateKey.includes("-----BEGIN PRIVATE KEY-----") ||
+    !privateKey.includes("-----END PRIVATE KEY-----")
+  ) {
+    console.error(
+      "GOOGLE_PRIVATE_KEY is not formatted correctly. It must include BEGIN and END PRIVATE KEY lines."
+    );
+    return null;
+  }
+
+  return privateKey;
+}
+
 async function getCalendarClient() {
-  const calendarId = process.env.GOOGLE_CALENDAR_ID;
-  const clientEmail = process.env.GOOGLE_CLIENT_EMAIL;
-  const privateKey = process.env.GOOGLE_PRIVATE_KEY;
+  const calendarId = process.env.GOOGLE_CALENDAR_ID?.trim();
+  const clientEmail = process.env.GOOGLE_CLIENT_EMAIL?.trim();
+  const privateKey = getFormattedPrivateKey();
+
+  console.log("Google Calendar env check:", {
+    hasGoogleCalendarId: !!calendarId,
+    hasGoogleClientEmail: !!clientEmail,
+    hasGooglePrivateKey: !!privateKey,
+  });
 
   if (!calendarId || !clientEmail || !privateKey) {
     return null;
@@ -57,7 +97,7 @@ async function getCalendarClient() {
 
   const auth = new google.auth.JWT({
     email: clientEmail,
-    key: privateKey.replace(/\\n/g, "\n"),
+    key: privateKey,
     scopes: ["https://www.googleapis.com/auth/calendar"],
   });
 
@@ -95,7 +135,9 @@ export async function createCalendarEvent(
   const calendarClient = await getCalendarClient();
 
   if (!calendarClient) {
-    console.warn("Google Calendar env vars missing. Skipping calendar event creation.");
+    console.warn(
+      "Google Calendar env vars missing or invalid. Skipping calendar event creation."
+    );
     return null;
   }
 
@@ -145,7 +187,9 @@ export async function updateCalendarEvent(
   const calendarClient = await getCalendarClient();
 
   if (!calendarClient) {
-    console.warn("Google Calendar env vars missing. Skipping calendar event update.");
+    console.warn(
+      "Google Calendar env vars missing or invalid. Skipping calendar event update."
+    );
     return false;
   }
 
@@ -200,7 +244,9 @@ export async function deleteCalendarEvent(eventId: string): Promise<boolean> {
   const calendarClient = await getCalendarClient();
 
   if (!calendarClient) {
-    console.warn("Google Calendar env vars missing. Skipping calendar event delete.");
+    console.warn(
+      "Google Calendar env vars missing or invalid. Skipping calendar event delete."
+    );
     return false;
   }
 
