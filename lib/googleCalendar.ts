@@ -50,12 +50,27 @@ function getFormattedPrivateKey(): string | null {
   const rawPrivateKey = process.env.GOOGLE_PRIVATE_KEY;
 
   if (!rawPrivateKey) {
+    console.error("Missing GOOGLE_PRIVATE_KEY env var.");
     return null;
   }
 
   let privateKey = rawPrivateKey.trim();
 
-  // Handles cases where the key was pasted into Vercel with wrapping quotes.
+  // If someone pasted the entire service account JSON into GOOGLE_PRIVATE_KEY,
+  // try to pull out the private_key field.
+  if (privateKey.startsWith("{")) {
+    try {
+      const parsed = JSON.parse(privateKey);
+      if (parsed.private_key) {
+        privateKey = parsed.private_key;
+      }
+    } catch (error) {
+      console.error("GOOGLE_PRIVATE_KEY looks like JSON but could not be parsed.");
+      return null;
+    }
+  }
+
+  // Handles wrapping quotes from Vercel or copy/paste.
   if (
     (privateKey.startsWith('"') && privateKey.endsWith('"')) ||
     (privateKey.startsWith("'") && privateKey.endsWith("'"))
@@ -63,16 +78,31 @@ function getFormattedPrivateKey(): string | null {
     privateKey = privateKey.slice(1, -1);
   }
 
-  // Converts literal "\n" characters into real line breaks.
+  // Converts escaped newline characters into real line breaks.
   privateKey = privateKey.replace(/\\n/g, "\n");
 
-  // Final sanity check so we fail with a clear log instead of an OpenSSL decoder error.
-  if (
-    !privateKey.includes("-----BEGIN PRIVATE KEY-----") ||
-    !privateKey.includes("-----END PRIVATE KEY-----")
-  ) {
+  // Handles double-escaped newline edge cases.
+  privateKey = privateKey.replace(/\\\\n/g, "\n");
+
+  // Remove accidental surrounding spaces on each line.
+  privateKey = privateKey
+    .split("\n")
+    .map((line) => line.trim())
+    .join("\n");
+
+  const startsCorrectly = privateKey.startsWith("-----BEGIN PRIVATE KEY-----");
+  const endsCorrectly = privateKey.endsWith("-----END PRIVATE KEY-----");
+  const hasRealNewLines = privateKey.includes("\n");
+
+  console.log("Google private key formatting check:", {
+    startsCorrectly,
+    endsCorrectly,
+    hasRealNewLines,
+  });
+
+  if (!startsCorrectly || !endsCorrectly || !hasRealNewLines) {
     console.error(
-      "GOOGLE_PRIVATE_KEY is not formatted correctly. It must include BEGIN and END PRIVATE KEY lines."
+      "GOOGLE_PRIVATE_KEY is not formatted correctly. It must start with BEGIN PRIVATE KEY, end with END PRIVATE KEY, and contain real new lines."
     );
     return null;
   }
@@ -89,6 +119,7 @@ async function getCalendarClient() {
     hasGoogleCalendarId: !!calendarId,
     hasGoogleClientEmail: !!clientEmail,
     hasGooglePrivateKey: !!privateKey,
+    googleClientEmail: clientEmail,
   });
 
   if (!calendarId || !clientEmail || !privateKey) {
