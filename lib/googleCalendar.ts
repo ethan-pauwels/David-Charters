@@ -56,15 +56,19 @@ function getFormattedPrivateKey(): string | null {
 
   let privateKey = rawPrivateKey.trim();
 
-  // If someone pasted the entire service account JSON into GOOGLE_PRIVATE_KEY,
-  // try to pull out the private_key field.
+  // If the whole service account JSON was pasted into GOOGLE_PRIVATE_KEY,
+  // pull out the private_key field.
   if (privateKey.startsWith("{")) {
     try {
-      const parsed = JSON.parse(privateKey);
-      if (parsed.private_key) {
-        privateKey = parsed.private_key;
+      const parsed = JSON.parse(privateKey) as { private_key?: string };
+
+      if (!parsed.private_key) {
+        console.error("Service account JSON does not contain private_key.");
+        return null;
       }
-    } catch (error) {
+
+      privateKey = parsed.private_key;
+    } catch {
       console.error("GOOGLE_PRIVATE_KEY looks like JSON but could not be parsed.");
       return null;
     }
@@ -78,17 +82,19 @@ function getFormattedPrivateKey(): string | null {
     privateKey = privateKey.slice(1, -1);
   }
 
-  // Converts escaped newline characters into real line breaks.
-  privateKey = privateKey.replace(/\\n/g, "\n");
-
-  // Handles double-escaped newline edge cases.
+  // Convert escaped newlines into real line breaks.
+  // Order matters: handle double-escaped newlines first.
   privateKey = privateKey.replace(/\\\\n/g, "\n");
+  privateKey = privateKey.replace(/\\n/g, "\n");
+  privateKey = privateKey.replace(/\\r\\n/g, "\n");
+  privateKey = privateKey.replace(/\r\n/g, "\n");
 
-  // Remove accidental surrounding spaces on each line.
+  // Clean accidental spaces on each line, then trim the whole key again.
   privateKey = privateKey
     .split("\n")
     .map((line) => line.trim())
-    .join("\n");
+    .join("\n")
+    .trim();
 
   const startsCorrectly = privateKey.startsWith("-----BEGIN PRIVATE KEY-----");
   const endsCorrectly = privateKey.endsWith("-----END PRIVATE KEY-----");
@@ -119,7 +125,6 @@ async function getCalendarClient() {
     hasGoogleCalendarId: !!calendarId,
     hasGoogleClientEmail: !!clientEmail,
     hasGooglePrivateKey: !!privateKey,
-    googleClientEmail: clientEmail,
   });
 
   if (!calendarId || !clientEmail || !privateKey) {
@@ -178,7 +183,9 @@ export async function createCalendarEvent(
 
     const startTime = normalizeTime(input.startTime);
     const endTime = normalizeTime(input.endTime);
-    const slotLabel = `${formatTimeTo12Hour(startTime)} - ${formatTimeTo12Hour(endTime)}`;
+    const slotLabel = `${formatTimeTo12Hour(startTime)} - ${formatTimeTo12Hour(
+      endTime
+    )}`;
 
     const event = await calendar.events.insert({
       calendarId,
@@ -235,7 +242,9 @@ export async function updateCalendarEvent(
 
     const startTime = normalizeTime(input.startTime);
     const endTime = normalizeTime(input.endTime);
-    const slotLabel = `${formatTimeTo12Hour(startTime)} - ${formatTimeTo12Hour(endTime)}`;
+    const slotLabel = `${formatTimeTo12Hour(startTime)} - ${formatTimeTo12Hour(
+      endTime
+    )}`;
 
     await calendar.events.update({
       calendarId,
