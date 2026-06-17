@@ -47,6 +47,8 @@ function formatTimeTo12Hour(time: string): string {
 }
 
 function getFormattedPrivateKey(): string | null {
+  console.log("GCAL FORMATTER VERSION: BASE64-V3-ETHAN");
+
   const rawBase64PrivateKey = process.env.GOOGLE_PRIVATE_KEY_BASE64?.trim();
   const rawPrivateKey = process.env.GOOGLE_PRIVATE_KEY?.trim();
 
