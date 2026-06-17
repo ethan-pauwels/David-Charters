@@ -15,8 +15,25 @@ type CheckoutBody = {
   occasion?: string;
 };
 
+const allowedTimeSlots = [
+  {
+    start: "11:00:00",
+    end: "15:00:00",
+  },
+  {
+    start: "15:30:00",
+    end: "19:30:00",
+  },
+];
+
 function normalizeTime(time: string): string {
   return time.length === 5 ? `${time}:00` : time;
+}
+
+function isAllowedTimeSlot(startTime: string, endTime: string): boolean {
+  return allowedTimeSlots.some(
+    (slot) => slot.start === startTime && slot.end === endTime
+  );
 }
 
 function formatTimeTo12Hour(time: string): string {
@@ -61,6 +78,13 @@ export async function POST(request: Request) {
       );
     }
 
+    if (!isAllowedTimeSlot(startTime, endTime)) {
+      return NextResponse.json(
+        { error: "That is not a valid charter time slot." },
+        { status: 400 }
+      );
+    }
+
     if (!Number.isInteger(guestCount) || guestCount < 1 || guestCount > 12) {
       return NextResponse.json(
         { error: "Guest count must be between 1 and 12." },
@@ -70,37 +94,51 @@ export async function POST(request: Request) {
 
     const dayOfWeek = getUtcDateFromYmd(bookingDate).getUTCDay();
 
-    const [settingsResult, availabilityResult, bookingsResult, priceOverrideResult] =
-      await Promise.all([
-        supabase
-          .from("business_settings")
-          .select("price_cents, charter_name")
-          .limit(1)
-          .maybeSingle(),
+    const [
+      settingsResult,
+      availabilityResult,
+      bookingsResult,
+      blockedSlotResult,
+      priceOverrideResult,
+    ] = await Promise.all([
+      supabase
+        .from("business_settings")
+        .select("price_cents, charter_name")
+        .limit(1)
+        .maybeSingle(),
 
-        supabase
-          .from("weekly_availability")
-          .select("id")
-          .eq("day_of_week", dayOfWeek)
-          .eq("start_time", startTime)
-          .eq("end_time", endTime)
-          .eq("is_active", true)
-          .maybeSingle(),
+      supabase
+        .from("weekly_availability")
+        .select("id")
+        .eq("day_of_week", dayOfWeek)
+        .eq("start_time", startTime)
+        .eq("end_time", endTime)
+        .eq("is_active", true)
+        .maybeSingle(),
 
-        supabase
-          .from("bookings")
-          .select("id")
-          .eq("booking_date", bookingDate)
-          .eq("start_time", startTime)
-          .eq("end_time", endTime)
-          .eq("status", "confirmed")
-          .maybeSingle(),
+      supabase
+        .from("bookings")
+        .select("id")
+        .eq("booking_date", bookingDate)
+        .eq("start_time", startTime)
+        .eq("end_time", endTime)
+        .eq("status", "confirmed")
+        .maybeSingle(),
 
-          supabase
-            .from("date_price_overrides")
-            .select("price_cents, start_time, end_time")
-            .eq("booking_date", bookingDate),
-      ]);
+      supabase
+        .from("blocked_slots")
+        .select("id, reason")
+        .eq("booking_date", bookingDate)
+        .eq("start_time", startTime)
+        .eq("end_time", endTime)
+        .limit(1)
+        .maybeSingle(),
+
+      supabase
+        .from("date_price_overrides")
+        .select("price_cents, start_time, end_time")
+        .eq("booking_date", bookingDate),
+    ]);
 
     console.log("Checkout debug:", {
       bookingDate,
@@ -110,6 +148,8 @@ export async function POST(request: Request) {
       settingsError: settingsResult.error,
       availabilityError: availabilityResult.error,
       bookingsError: bookingsResult.error,
+      blockedSlotError: blockedSlotResult.error,
+      blockedSlotData: blockedSlotResult.data,
       priceOverrideError: priceOverrideResult.error,
       priceOverrideData: priceOverrideResult.data,
     });
@@ -144,7 +184,26 @@ export async function POST(request: Request) {
     if (bookingsResult.data) {
       return NextResponse.json(
         { error: "That time slot has already been booked." },
-        { status: 400 }
+        { status: 409 }
+      );
+    }
+
+    if (blockedSlotResult.error) {
+      console.error("Blocked slot check failed:", blockedSlotResult.error);
+      return NextResponse.json(
+        { error: "Could not verify blocked slots." },
+        { status: 500 }
+      );
+    }
+
+    if (blockedSlotResult.data) {
+      return NextResponse.json(
+        {
+          error:
+            blockedSlotResult.data.reason ||
+            "That time slot is unavailable. Please choose another slot.",
+        },
+        { status: 409 }
       );
     }
 
@@ -162,23 +221,26 @@ export async function POST(request: Request) {
         normalizeTime(override.end_time) === endTime
       );
     });
+
     console.log("All price overrides for date:", priceOverrideResult.data);
     console.log("Matched price override:", priceOverride);
 
     let priceCents = priceOverride?.price_cents ?? 70000;
 
     if (!priceOverride) {
-         if (dayOfWeek === 6) {
-            priceCents = 90000;
-         } else if (dayOfWeek === 0) {
-            priceCents = 80000;
-         }
-       }
+      if (dayOfWeek === 6) {
+        priceCents = 90000;
+      } else if (dayOfWeek === 0) {
+        priceCents = 80000;
+      }
+    }
 
     console.log("Final checkout price:", priceCents);
 
-    const charterName = settingsResult.data?.charter_name ?? "David Charters";
-    const slotLabel = `${formatTimeTo12Hour(startTime)} - ${formatTimeTo12Hour(endTime)}`;
+    const charterName = settingsResult.data?.charter_name ?? "David's Charters";
+    const slotLabel = `${formatTimeTo12Hour(startTime)} - ${formatTimeTo12Hour(
+      endTime
+    )}`;
 
     const baseUrl = process.env.NEXT_PUBLIC_BASE_URL;
 
