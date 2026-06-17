@@ -1,12 +1,66 @@
 import { Resend } from "resend";
 
-const resend = new Resend(process.env.RESEND_API_KEY);
+function getRequiredEnv(name: string): string {
+  const value = process.env[name];
 
-function formatTimeTo12Hour(time: string) {
-  const [hour, minute] = time.split(":").map(Number);
+  if (!value || !value.trim()) {
+    throw new Error(`Missing required environment variable: ${name}`);
+  }
+
+  return value.trim();
+}
+
+function getResendClient() {
+  const apiKey = getRequiredEnv("RESEND_API_KEY");
+  return new Resend(apiKey);
+}
+
+function normalizeTime(time: string): string {
+  return time.length === 5 ? `${time}:00` : time;
+}
+
+function formatTimeTo12Hour(time: string): string {
+  const normalized = normalizeTime(time);
+  const [hourString, minuteString] = normalized.split(":");
+
+  const hour = Number(hourString);
+  const minute = Number(minuteString);
+
+  if (!Number.isFinite(hour) || !Number.isFinite(minute)) {
+    return time;
+  }
+
   const suffix = hour >= 12 ? "PM" : "AM";
   const adjusted = hour % 12 === 0 ? 12 : hour % 12;
+
   return `${adjusted}:${minute.toString().padStart(2, "0")} ${suffix}`;
+}
+
+function escapeHtml(value: string): string {
+  return value
+    .replaceAll("&", "&amp;")
+    .replaceAll("<", "&lt;")
+    .replaceAll(">", "&gt;")
+    .replaceAll('"', "&quot;")
+    .replaceAll("'", "&#039;");
+}
+
+function getBaseUrl(): string {
+  return (
+    process.env.NEXT_PUBLIC_BASE_URL ||
+    process.env.BASE_URL ||
+    "https://www.davidscharters.com"
+  ).replace(/\/$/, "");
+}
+
+function stringifyError(error: unknown): string {
+  if (!error) return "Unknown error";
+
+  try {
+    return JSON.stringify(error, null, 2);
+  } catch {
+    return String(error);
+  }
 }
 
 export async function sendCustomerEmail({
@@ -24,27 +78,44 @@ export async function sendCustomerEmail({
   endTime: string;
   charterName: string;
 }) {
-  const slot = `${formatTimeTo12Hour(startTime)} - ${formatTimeTo12Hour(endTime)}`;
-  const baseUrl = process.env.NEXT_PUBLIC_BASE_URL ?? "";
+  const resend = getResendClient();
+
+  const emailFrom = getRequiredEnv("EMAIL_FROM");
+  const slot = `${formatTimeTo12Hour(startTime)} - ${formatTimeTo12Hour(
+    endTime
+  )}`;
+
+  const baseUrl = getBaseUrl();
   const parkingMapUrl = `${baseUrl}/parking-map.jpeg`;
 
-  await resend.emails.send({
-    from: process.env.EMAIL_FROM!,
+  const safeName = escapeHtml(name);
+  const safeDate = escapeHtml(date);
+  const safeSlot = escapeHtml(slot);
+  const safeCharterName = escapeHtml(charterName);
+
+  console.log("Resend customer email attempt:", {
+    to,
+    from: emailFrom,
+    subject: "Your David Charters booking is confirmed 🎉",
+  });
+
+  const { data, error } = await resend.emails.send({
+    from: emailFrom,
     to,
     subject: "Your David Charters booking is confirmed 🎉",
     html: `
       <div style="font-family: Arial, sans-serif; color: #0f172a; line-height: 1.6; max-width: 640px; margin: 0 auto;">
         <h2 style="color: #0f172a;">You're booked! 🚤</h2>
 
-        <p>Hey ${name},</p>
+        <p>Hey ${safeName},</p>
 
         <p>Your private charter has been confirmed. Here are the important details for your trip:</p>
 
         <div style="background: #f1f5f9; padding: 16px; border-radius: 12px; margin: 20px 0;">
           <h3 style="margin-top: 0;">Booking Details</h3>
-          <p><strong>Charter:</strong> ${charterName}</p>
-          <p><strong>Date:</strong> ${date}</p>
-          <p><strong>Time:</strong> ${slot}</p>
+          <p><strong>Charter:</strong> ${safeCharterName}</p>
+          <p><strong>Date:</strong> ${safeDate}</p>
+          <p><strong>Time:</strong> ${safeSlot}</p>
         </div>
 
         <div style="background: #eff6ff; padding: 16px; border-radius: 12px; margin: 20px 0;">
@@ -111,6 +182,14 @@ export async function sendCustomerEmail({
       </div>
     `,
   });
+
+  console.log("Resend customer email response:", { data, error });
+
+  if (error) {
+    throw new Error(`Resend customer email failed: ${stringifyError(error)}`);
+  }
+
+  return data;
 }
 
 export async function sendAdminEmail({
@@ -128,22 +207,51 @@ export async function sendAdminEmail({
   endTime: string;
   charterName: string;
 }) {
-  const slot = `${formatTimeTo12Hour(startTime)} - ${formatTimeTo12Hour(endTime)}`;
+  const resend = getResendClient();
 
-  await resend.emails.send({
-    from: process.env.EMAIL_FROM!,
-    to: process.env.ADMIN_EMAIL!,
+  const emailFrom = getRequiredEnv("EMAIL_FROM");
+  const adminEmail = getRequiredEnv("ADMIN_EMAIL");
+
+  const slot = `${formatTimeTo12Hour(startTime)} - ${formatTimeTo12Hour(
+    endTime
+  )}`;
+
+  const safeName = escapeHtml(name);
+  const safeEmail = escapeHtml(email);
+  const safeDate = escapeHtml(date);
+  const safeSlot = escapeHtml(slot);
+  const safeCharterName = escapeHtml(charterName);
+
+  console.log("Resend admin email attempt:", {
+    to: adminEmail,
+    from: emailFrom,
+    subject: "New booking 🚤",
+  });
+
+  const { data, error } = await resend.emails.send({
+    from: emailFrom,
+    to: adminEmail,
     subject: "New booking 🚤",
     html: `
-      <h2>New booking received</h2>
+      <div style="font-family: Arial, sans-serif; color: #0f172a; line-height: 1.6; max-width: 640px;">
+        <h2>New booking received 🚤</h2>
 
-      <p><strong>${name}</strong></p>
-      <p>${email}</p>
-
-      <p>Date: ${date}</p>
-      <p>Time: ${slot}</p>
-
-      <p>${charterName}</p>
+        <div style="background: #f1f5f9; padding: 16px; border-radius: 12px; margin: 20px 0;">
+          <p><strong>Name:</strong> ${safeName}</p>
+          <p><strong>Email:</strong> ${safeEmail}</p>
+          <p><strong>Date:</strong> ${safeDate}</p>
+          <p><strong>Time:</strong> ${safeSlot}</p>
+          <p><strong>Charter:</strong> ${safeCharterName}</p>
+        </div>
+      </div>
     `,
   });
+
+  console.log("Resend admin email response:", { data, error });
+
+  if (error) {
+    throw new Error(`Resend admin email failed: ${stringifyError(error)}`);
+  }
+
+  return data;
 }
