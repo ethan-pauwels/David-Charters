@@ -47,68 +47,92 @@ function formatTimeTo12Hour(time: string): string {
 }
 
 function getFormattedPrivateKey(): string | null {
-  const rawPrivateKey = process.env.GOOGLE_PRIVATE_KEY;
+  const rawBase64PrivateKey = process.env.GOOGLE_PRIVATE_KEY_BASE64?.trim();
+  const rawPrivateKey = process.env.GOOGLE_PRIVATE_KEY?.trim();
 
-  if (!rawPrivateKey) {
-    console.error("Missing GOOGLE_PRIVATE_KEY env var.");
-    return null;
-  }
+  let privateKey: string | null = null;
 
-  let privateKey = rawPrivateKey.trim();
-
-  // If the whole service account JSON was pasted into GOOGLE_PRIVATE_KEY,
-  // pull out the private_key field.
-  if (privateKey.startsWith("{")) {
+  // Preferred method: base64 encoded private key.
+  // This avoids Vercel newline/backslash formatting issues completely.
+  if (rawBase64PrivateKey) {
     try {
-      const parsed = JSON.parse(privateKey) as { private_key?: string };
+      privateKey = Buffer.from(rawBase64PrivateKey, "base64")
+        .toString("utf-8")
+        .trim();
 
-      if (!parsed.private_key) {
-        console.error("Service account JSON does not contain private_key.");
-        return null;
-      }
-
-      privateKey = parsed.private_key;
-    } catch {
-      console.error("GOOGLE_PRIVATE_KEY looks like JSON but could not be parsed.");
+      console.log("Using GOOGLE_PRIVATE_KEY_BASE64 for Google Calendar auth.");
+    } catch (error) {
+      console.error("Failed to decode GOOGLE_PRIVATE_KEY_BASE64:", error);
       return null;
     }
   }
 
-  // Handles wrapping quotes from Vercel or copy/paste.
-  if (
-    (privateKey.startsWith('"') && privateKey.endsWith('"')) ||
-    (privateKey.startsWith("'") && privateKey.endsWith("'"))
-  ) {
-    privateKey = privateKey.slice(1, -1);
+  // Fallback method: normal GOOGLE_PRIVATE_KEY env var.
+  if (!privateKey && rawPrivateKey) {
+    privateKey = rawPrivateKey.trim();
+
+    // If the whole service account JSON was pasted into GOOGLE_PRIVATE_KEY,
+    // pull out the private_key field.
+    if (privateKey.startsWith("{")) {
+      try {
+        const parsed = JSON.parse(privateKey) as { private_key?: string };
+
+        if (!parsed.private_key) {
+          console.error("Service account JSON does not contain private_key.");
+          return null;
+        }
+
+        privateKey = parsed.private_key;
+      } catch {
+        console.error("GOOGLE_PRIVATE_KEY looks like JSON but could not be parsed.");
+        return null;
+      }
+    }
+
+    // Handles wrapping quotes from Vercel or copy/paste.
+    if (
+      (privateKey.startsWith('"') && privateKey.endsWith('"')) ||
+      (privateKey.startsWith("'") && privateKey.endsWith("'"))
+    ) {
+      privateKey = privateKey.slice(1, -1);
+    }
+
+    privateKey = privateKey.replace(/\\\\n/g, "\n");
+    privateKey = privateKey.replace(/\\n/g, "\n");
+    privateKey = privateKey.replace(/\\r\\n/g, "\n");
+    privateKey = privateKey.replace(/\r\n/g, "\n");
+
+    privateKey = privateKey
+      .split("\n")
+      .map((line) => line.trim())
+      .join("\n")
+      .trim();
+
+    console.log("Using GOOGLE_PRIVATE_KEY for Google Calendar auth.");
   }
 
-  // Convert escaped newlines into real line breaks.
-  // Order matters: handle double-escaped newlines first.
-  privateKey = privateKey.replace(/\\\\n/g, "\n");
-  privateKey = privateKey.replace(/\\n/g, "\n");
-  privateKey = privateKey.replace(/\\r\\n/g, "\n");
-  privateKey = privateKey.replace(/\r\n/g, "\n");
-
-  // Clean accidental spaces on each line, then trim the whole key again.
-  privateKey = privateKey
-    .split("\n")
-    .map((line) => line.trim())
-    .join("\n")
-    .trim();
+  if (!privateKey) {
+    console.error(
+      "Missing Google private key. Add GOOGLE_PRIVATE_KEY_BASE64 or GOOGLE_PRIVATE_KEY."
+    );
+    return null;
+  }
 
   const startsCorrectly = privateKey.startsWith("-----BEGIN PRIVATE KEY-----");
   const endsCorrectly = privateKey.endsWith("-----END PRIVATE KEY-----");
   const hasRealNewLines = privateKey.includes("\n");
 
   console.log("Google private key formatting check:", {
+    source: rawBase64PrivateKey ? "GOOGLE_PRIVATE_KEY_BASE64" : "GOOGLE_PRIVATE_KEY",
     startsCorrectly,
     endsCorrectly,
     hasRealNewLines,
+    keyLength: privateKey.length,
   });
 
   if (!startsCorrectly || !endsCorrectly || !hasRealNewLines) {
     console.error(
-      "GOOGLE_PRIVATE_KEY is not formatted correctly. It must start with BEGIN PRIVATE KEY, end with END PRIVATE KEY, and contain real new lines."
+      "Google private key is not formatted correctly after decoding."
     );
     return null;
   }
