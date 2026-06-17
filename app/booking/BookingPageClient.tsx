@@ -9,6 +9,74 @@ import Button from "@/components/Button";
 import { formatCurrency } from "@/lib/utils";
 import type { AvailabilityResponse } from "@/types/booking";
 
+type AvailabilitySlot = AvailabilityResponse["slots"][number] & {
+  price_cents?: number | string | null;
+  price_note?: string | null;
+
+  reason?: string | null;
+  blocked_reason?: string | null;
+  blocked_note?: string | null;
+  unavailable_reason?: string | null;
+
+  is_blocked?: boolean;
+  blocked?: boolean;
+  is_booked?: boolean;
+  booked?: boolean;
+  is_available?: boolean;
+  available?: boolean;
+};
+
+function normalizeTime(time: string): string {
+  return time.length === 5 ? `${time}:00` : time;
+}
+
+function formatTimeTo12Hour(time: string): string {
+  const normalized = normalizeTime(time);
+  const [hourString, minuteString] = normalized.split(":");
+  const hour = Number(hourString);
+  const minute = Number(minuteString);
+
+  const suffix = hour >= 12 ? "PM" : "AM";
+  const adjustedHour = hour % 12 === 0 ? 12 : hour % 12;
+
+  return `${adjustedHour}:${minute.toString().padStart(2, "0")} ${suffix}`;
+}
+
+function formatTimeRange(start: string, end: string): string {
+  return `${formatTimeTo12Hour(start)} - ${formatTimeTo12Hour(end)}`;
+}
+
+function getCleanString(value: unknown): string | null {
+  return typeof value === "string" && value.trim() ? value.trim() : null;
+}
+
+function getBlockedSlotNote(slot: AvailabilitySlot): string | null {
+  return (
+    getCleanString(slot.blocked_reason) ||
+    getCleanString(slot.blocked_note) ||
+    getCleanString(slot.unavailable_reason) ||
+    getCleanString(slot.reason) ||
+    null
+  );
+}
+
+function getPriceNote(slot: AvailabilitySlot | undefined): string | null {
+  if (!slot) return null;
+  return getCleanString(slot.price_note);
+}
+
+function isSlotUnavailable(slot: AvailabilitySlot): boolean {
+  return (
+    slot.is_blocked === true ||
+    slot.blocked === true ||
+    slot.is_booked === true ||
+    slot.booked === true ||
+    slot.is_available === false ||
+    slot.available === false ||
+    !!getBlockedSlotNote(slot)
+  );
+}
+
 export default function BookingPageContent() {
   const searchParams = useSearchParams();
 
@@ -16,7 +84,8 @@ export default function BookingPageContent() {
   const canceled = searchParams.get("canceled") === "1";
 
   const [date, setDate] = useState("");
-  const [availability, setAvailability] = useState<AvailabilityResponse | null>(null);
+  const [availability, setAvailability] =
+    useState<AvailabilityResponse | null>(null);
   const [selectedStart, setSelectedStart] = useState("");
   const [selectedEnd, setSelectedEnd] = useState("");
   const [loadingSlots, setLoadingSlots] = useState(false);
@@ -30,37 +99,65 @@ export default function BookingPageContent() {
   const [guestCount, setGuestCount] = useState("1");
   const [occasion, setOccasion] = useState("");
 
-  const selectedDayOfWeek = date ? new Date(`${date}T00:00:00`).getDay() : null;
+  const selectedDayOfWeek = date
+    ? new Date(`${date}T00:00:00`).getDay()
+    : null;
 
   const fallbackPriceCents =
-    selectedDayOfWeek === 6
-      ? 90000
-      : selectedDayOfWeek === 0
-        ? 80000
-        : 70000;
+    selectedDayOfWeek === 6 ? 90000 : selectedDayOfWeek === 0 ? 80000 : 70000;
 
   const selectedSlot = availability?.slots.find(
     (slot) => slot.start === selectedStart && slot.end === selectedEnd
-  );
+  ) as AvailabilitySlot | undefined;
+
+  const selectedSlotUnavailable = selectedSlot
+    ? isSlotUnavailable(selectedSlot)
+    : false;
 
   const slotPriceCents =
-    selectedSlot && "price_cents" in selectedSlot
+    selectedSlot?.price_cents !== undefined && selectedSlot?.price_cents !== null
       ? Number(selectedSlot.price_cents)
       : null;
 
   const currentPriceCents =
-    typeof slotPriceCents === "number" && slotPriceCents > 0
+    typeof slotPriceCents === "number" &&
+    Number.isFinite(slotPriceCents) &&
+    slotPriceCents > 0
       ? slotPriceCents
       : fallbackPriceCents;
 
-  const currentCharterName = availability?.settings?.charter_name ?? "Your charter";
+  const currentCharterName =
+    availability?.settings?.charter_name ?? "Your charter";
 
-  const priceNote =
-    selectedSlot &&
-    "price_note" in selectedSlot &&
-    typeof selectedSlot.price_note === "string"
-      ? selectedSlot.price_note
-      : null;
+  const priceNote = getPriceNote(selectedSlot);
+
+  const selectedBlockedNote = selectedSlot
+    ? getBlockedSlotNote(selectedSlot)
+    : null;
+
+  const blockedSlotNotes = useMemo(() => {
+    if (!availability?.slots) return [];
+
+    return availability.slots
+      .map((slot) => {
+        const extendedSlot = slot as AvailabilitySlot;
+        const note = getBlockedSlotNote(extendedSlot);
+
+        if (!note) return null;
+
+        return {
+          key: `${extendedSlot.start}-${extendedSlot.end}`,
+          label:
+            extendedSlot.label ||
+            formatTimeRange(extendedSlot.start, extendedSlot.end),
+          note,
+        };
+      })
+      .filter(
+        (item): item is { key: string; label: string; note: string } =>
+          Boolean(item)
+      );
+  }, [availability]);
 
   useEffect(() => {
     if (success) {
@@ -112,13 +209,18 @@ export default function BookingPageContent() {
   }, [date]);
 
   const selectedLabel = useMemo(() => {
-    return availability?.slots.find((slot) => slot.start === selectedStart)?.label ?? "";
-  }, [availability, selectedStart]);
+    return (
+      availability?.slots.find(
+        (slot) => slot.start === selectedStart && slot.end === selectedEnd
+      )?.label ?? ""
+    );
+  }, [availability, selectedStart, selectedEnd]);
 
   const isReadyToBook =
     !!date &&
     !!selectedStart &&
     !!selectedEnd &&
+    !selectedSlotUnavailable &&
     !!customerName.trim() &&
     !!customerEmail.trim() &&
     Number(guestCount) >= 1 &&
@@ -126,7 +228,17 @@ export default function BookingPageContent() {
 
   async function handleCheckout() {
     if (!date || !selectedStart || !selectedEnd || !customerName || !customerEmail) {
-      setPageError("Please complete your date, time slot, name, and email before continuing.");
+      setPageError(
+        "Please complete your date, time slot, name, and email before continuing."
+      );
+      return;
+    }
+
+    if (selectedSlotUnavailable) {
+      setPageError(
+        selectedBlockedNote ||
+          "That time slot is unavailable. Please choose another slot."
+      );
       return;
     }
 
@@ -182,8 +294,8 @@ export default function BookingPageContent() {
             Book your day on the water
           </h1>
           <p className="mt-4 max-w-2xl text-lg text-white/80">
-            Choose your date, pick an available time slot, and lock in your private
-            4 hour charter in just a few minutes.
+            Choose your date, pick an available time slot, and lock in your
+            private 4 hour charter in just a few minutes.
           </p>
         </div>
       </section>
@@ -195,7 +307,8 @@ export default function BookingPageContent() {
               Private charter
             </p>
             <p className="mt-2 text-sm text-slate-600">
-              A clean and simple booking flow for your group, not a crowded public tour.
+              A clean and simple booking flow for your group, not a crowded
+              public tour.
             </p>
           </div>
 
@@ -204,7 +317,8 @@ export default function BookingPageContent() {
               Weekend availability
             </p>
             <p className="mt-2 text-sm text-slate-600">
-              Choose from two daily time slots: 11:00 AM to 3:00 PM or 3:30 PM to 7:30 PM.
+              Choose from two daily time slots: 11:00 AM to 3:00 PM or 3:30 PM
+              to 7:30 PM.
             </p>
           </div>
 
@@ -213,7 +327,8 @@ export default function BookingPageContent() {
               Secure checkout
             </p>
             <p className="mt-2 text-sm text-slate-600">
-              Confirm your booking details first, then continue to payment with confidence.
+              Confirm your booking details first, then continue to payment with
+              confidence.
             </p>
           </div>
         </div>
@@ -224,8 +339,8 @@ export default function BookingPageContent() {
           <div className="mb-8 rounded-3xl border border-green-300 bg-green-50 p-6 text-green-900 shadow-sm">
             <h2 className="text-2xl font-bold">You are booked</h2>
             <p className="mt-2 text-sm sm:text-base">
-              Payment was received and your charter request has been submitted successfully.
-              Your selected time slot should now be reserved.
+              Payment was received and your charter request has been submitted
+              successfully. Your selected time slot should now be reserved.
             </p>
           </div>
         )}
@@ -234,8 +349,8 @@ export default function BookingPageContent() {
           <div className="mb-8 rounded-3xl border border-yellow-300 bg-yellow-50 p-6 text-yellow-900 shadow-sm">
             <h2 className="text-2xl font-bold">Checkout was canceled</h2>
             <p className="mt-2 text-sm sm:text-base">
-              No payment was completed, and your reservation was not saved. You can choose a
-              time slot and try again whenever you are ready.
+              No payment was completed, and your reservation was not saved. You
+              can choose a time slot and try again whenever you are ready.
             </p>
           </div>
         )}
@@ -308,11 +423,41 @@ export default function BookingPageContent() {
                     slots={availability.slots}
                     selectedStart={selectedStart}
                     onSelect={(start, end) => {
+                      const clickedSlot = availability.slots.find(
+                        (slot) => slot.start === start && slot.end === end
+                      ) as AvailabilitySlot | undefined;
+
+                      if (clickedSlot && isSlotUnavailable(clickedSlot)) {
+                        setSelectedStart("");
+                        setSelectedEnd("");
+                        setPageError(
+                          getBlockedSlotNote(clickedSlot) ||
+                            "That time slot is unavailable. Please choose another slot."
+                        );
+                        return;
+                      }
+
                       setSelectedStart(start);
                       setSelectedEnd(end);
                       setPageError("");
                     }}
                   />
+
+                  {blockedSlotNotes.length > 0 && (
+                    <div className="mt-4 grid gap-3">
+                      {blockedSlotNotes.map((slot) => (
+                        <div
+                          key={slot.key}
+                          className="rounded-2xl border border-amber-200 bg-amber-50 p-4 text-sm text-amber-950"
+                        >
+                          <p className="font-semibold">
+                            {slot.label} is unavailable
+                          </p>
+                          <p className="mt-1">{slot.note}</p>
+                        </div>
+                      ))}
+                    </div>
+                  )}
                 </>
               )}
             </section>
@@ -419,7 +564,8 @@ export default function BookingPageContent() {
                   />
 
                   <span>
-                    Send me occasional deals, promos, and future charter updates.
+                    Send me occasional deals, promos, and future charter
+                    updates.
                   </span>
                 </label>
               </div>
@@ -429,7 +575,8 @@ export default function BookingPageContent() {
               <div className="rounded-3xl border bg-white p-6 shadow-sm">
                 <h3 className="text-lg font-bold">What you are booking</h3>
                 <p className="mt-2 text-sm text-slate-600">
-                  A private 4 hour charter with fuel included, no mandatory captain fee, and no hidden fees.
+                  A private 4 hour charter with fuel included, no mandatory
+                  captain fee, and no hidden fees.
                 </p>
               </div>
 
@@ -443,7 +590,8 @@ export default function BookingPageContent() {
               <div className="rounded-3xl border bg-white p-6 shadow-sm">
                 <h3 className="text-lg font-bold">Why guests like it</h3>
                 <p className="mt-2 text-sm text-slate-600">
-                  Straightforward pricing with no surprise fuel charge, no mandatory captain fee, and no hidden fees.
+                  Straightforward pricing with no surprise fuel charge, no
+                  mandatory captain fee, and no hidden fees.
                 </p>
               </div>
             </section>
@@ -474,6 +622,12 @@ export default function BookingPageContent() {
                   <p className="mt-1 text-base font-semibold text-slate-900">
                     {selectedLabel || "Not selected"}
                   </p>
+
+                  {selectedBlockedNote && (
+                    <p className="mt-3 rounded-xl bg-red-50 px-3 py-2 text-sm font-medium text-red-800">
+                      {selectedBlockedNote}
+                    </p>
+                  )}
                 </div>
 
                 <div className="rounded-2xl bg-slate-50 p-4">
@@ -488,7 +642,9 @@ export default function BookingPageContent() {
 
               <div className="mt-6 rounded-2xl bg-sky-50 p-4">
                 <div className="flex items-center justify-between gap-4">
-                  <span className="text-sm font-medium text-slate-700">Total</span>
+                  <span className="text-sm font-medium text-slate-700">
+                    Total
+                  </span>
                   <span className="text-2xl font-bold text-slate-900">
                     {formatCurrency(currentPriceCents)}
                   </span>

@@ -41,6 +41,17 @@ const dayNames = [
   "Saturday",
 ];
 
+const fixedTimeSlots = [
+  {
+    value: "11:00:00-15:00:00",
+    label: "11:00 AM - 3:00 PM",
+  },
+  {
+    value: "15:30:00-19:30:00",
+    label: "3:30 PM - 7:30 PM",
+  },
+];
+
 function normalizeTime(time: string): string {
   return time.length === 5 ? `${time}:00` : time;
 }
@@ -73,8 +84,9 @@ export default function AdminPage() {
   >([]);
 
   const [newBlockDate, setNewBlockDate] = useState("");
-  const [newBlockStart, setNewBlockStart] = useState("");
-  const [newBlockEnd, setNewBlockEnd] = useState("");
+  const [newBlockTimeSlot, setNewBlockTimeSlot] = useState(
+    "11:00:00-15:00:00"
+  );
   const [newBlockReason, setNewBlockReason] = useState("");
 
   const [newDayOfWeek, setNewDayOfWeek] = useState("5");
@@ -126,6 +138,11 @@ export default function AdminPage() {
   }, [authenticated]);
 
   async function saveDateOverride() {
+    if (!overrideDate || !overridePrice) {
+      alert("Please choose a date and enter a price.");
+      return;
+    }
+
     const [startTime, endTime] = overrideTimeSlot.split("-");
 
     const res = await fetch("/api/admin/date-price", {
@@ -136,7 +153,7 @@ export default function AdminPage() {
         start_time: startTime,
         end_time: endTime,
         price_cents: Math.round(Number(overridePrice) * 100),
-        note: overrideNote,
+        note: overrideNote.trim() || null,
       }),
     });
 
@@ -152,23 +169,32 @@ export default function AdminPage() {
   }
 
   async function addBlockedSlot() {
+    if (!newBlockDate || !newBlockTimeSlot) {
+      alert("Please choose a date and time slot to block.");
+      return;
+    }
+
+    const [startTime, endTime] = newBlockTimeSlot.split("-");
+
     const res = await fetch("/api/admin/blocked-slots", {
       method: "POST",
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify({
         booking_date: newBlockDate,
-        start_time: newBlockStart,
-        end_time: newBlockEnd,
-        reason: newBlockReason,
+        start_time: startTime,
+        end_time: endTime,
+        reason: newBlockReason.trim() || null,
       }),
     });
 
     if (res.ok) {
       setNewBlockDate("");
-      setNewBlockStart("");
-      setNewBlockEnd("");
+      setNewBlockTimeSlot("11:00:00-15:00:00");
       setNewBlockReason("");
       loadData();
+    } else {
+      const data = await res.json().catch(() => null);
+      alert(data?.error || "Failed to add blocked slot.");
     }
   }
 
@@ -289,7 +315,7 @@ export default function AdminPage() {
             <p className="text-sm font-semibold uppercase tracking-[0.2em] text-sky-700">
               Admin Access
             </p>
-            <h1 className="mt-3 text-3xl font-bold">David Charters</h1>
+            <h1 className="mt-3 text-3xl font-bold">David&apos;s Charters</h1>
             <p className="mt-2 text-sm text-slate-600">
               Sign in to manage bookings, availability, blocked slots, and
               business settings.
@@ -337,7 +363,9 @@ export default function AdminPage() {
           <p className="text-sm font-semibold uppercase tracking-[0.2em] text-sky-300">
             Admin Dashboard
           </p>
-          <h1 className="mt-3 text-4xl font-bold">Manage David Charters</h1>
+          <h1 className="mt-3 text-4xl font-bold">
+            Manage David&apos;s Charters
+          </h1>
           <p className="mt-3 max-w-2xl text-white/75">
             Update booking settings, manage availability, block off dates, and
             review reservations.
@@ -375,12 +403,11 @@ export default function AdminPage() {
                 onChange={(e) => setOverrideTimeSlot(e.target.value)}
                 className="rounded-2xl border border-slate-300 p-3"
               >
-                <option value="11:00:00-15:00:00">
-                  11:00 AM - 3:00 PM
-                </option>
-                <option value="15:30:00-19:30:00">
-                  3:30 PM - 7:30 PM
-                </option>
+                {fixedTimeSlots.map((slot) => (
+                  <option key={slot.value} value={slot.value}>
+                    {slot.label}
+                  </option>
+                ))}
               </select>
 
               <input
@@ -474,36 +501,42 @@ export default function AdminPage() {
 
           <div className="rounded-3xl border bg-white p-6 shadow-sm">
             <h2 className="text-2xl font-bold">Blocked Slots</h2>
+            <p className="mt-2 text-sm text-slate-600">
+              Block one of the two bookable charter slots and add an optional
+              note to explain why it is unavailable.
+            </p>
 
-            <div className="mt-5 grid gap-4 md:grid-cols-4">
+            <div className="mt-5 grid gap-4 md:grid-cols-3">
               <input
                 type="date"
                 value={newBlockDate}
                 onChange={(e) => setNewBlockDate(e.target.value)}
                 className="rounded-2xl border border-slate-300 p-3"
               />
-              <input
-                type="time"
-                value={newBlockStart}
-                onChange={(e) => setNewBlockStart(e.target.value)}
+
+              <select
+                value={newBlockTimeSlot}
+                onChange={(e) => setNewBlockTimeSlot(e.target.value)}
                 className="rounded-2xl border border-slate-300 p-3"
-              />
-              <input
-                type="time"
-                value={newBlockEnd}
-                onChange={(e) => setNewBlockEnd(e.target.value)}
-                className="rounded-2xl border border-slate-300 p-3"
-              />
+              >
+                {fixedTimeSlots.map((slot) => (
+                  <option key={slot.value} value={slot.value}>
+                    {slot.label}
+                  </option>
+                ))}
+              </select>
+
               <input
                 type="text"
                 value={newBlockReason}
                 onChange={(e) => setNewBlockReason(e.target.value)}
                 className="rounded-2xl border border-slate-300 p-3"
-                placeholder="Reason"
+                placeholder="Note shown on booking page"
               />
+
               <button
                 onClick={addBlockedSlot}
-                className="rounded-2xl bg-slate-900 px-4 py-3 font-semibold text-white md:col-span-4"
+                className="rounded-2xl bg-slate-900 px-4 py-3 font-semibold text-white md:col-span-3"
               >
                 Add Blocked Slot
               </button>
@@ -521,7 +554,7 @@ export default function AdminPage() {
                       {formatTimeRange(slot.start_time, slot.end_time)}
                     </p>
                     <p className="text-sm text-slate-600">
-                      {slot.reason || "No reason"}
+                      {slot.reason || "No note"}
                     </p>
                   </div>
                   <button
@@ -621,12 +654,11 @@ export default function AdminPage() {
                           }
                           className="rounded-xl border border-slate-300 p-2"
                         >
-                          <option value="11:00:00-15:00:00">
-                            11:00 AM - 3:00 PM
-                          </option>
-                          <option value="15:30:00-19:30:00">
-                            3:30 PM - 7:30 PM
-                          </option>
+                          {fixedTimeSlots.map((slot) => (
+                            <option key={slot.value} value={slot.value}>
+                              {slot.label}
+                            </option>
+                          ))}
                         </select>
 
                         <button
