@@ -132,7 +132,7 @@ export default function HomePage() {
 
           <div className="relative overflow-hidden rounded-3xl shadow-xl">
             <Image
-              src="/gallery/IMG_1554.jpeg"
+              src="/gallery/Austin_Pontoon Slide Lake Travis_0426-30.jpg"
               alt="David's charter boat"
               width={1200}
               height={900}
